@@ -119,7 +119,12 @@ std::vector<DeviceStatus> PollAllDevices() {
     PollBluetooth(ctx);   // before the generic HID check: Windows' own level wins for the same device
     PollGenericHid(ctx);
     PollXInput(ctx);
-    return ctx.out;
+    // Local change: headsets / headphones / earbuds only. Mice, keyboards, controllers, phones
+    // and unknown devices are dropped here, so they never reach the taskbar, menu or tooltip.
+    std::vector<DeviceStatus> headsets;
+    for (auto& s : ctx.out)
+        if (s.kind == DeviceKind::Headset) headsets.push_back(std::move(s));
+    return headsets;
 }
 
 std::wstring DumpHidCollections() {

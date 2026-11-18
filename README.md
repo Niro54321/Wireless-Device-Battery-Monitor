@@ -1,5 +1,18 @@
 # Wireless Battery
 
+> **Headset-only fork.** This is a modified version of
+> [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0).
+> Changes from the original:
+> - Only headsets, headphones and earbuds are shown. Mice, keyboards, controllers and phones are left out.
+> - The headset icon is a drawn pair of over-ear headphones.
+> - While charging, an upright green battery with a lightning bolt appears next to the percentage, and it goes away
+>   when the charger is unplugged.
+> - Razer BlackShark V3 Pro: the charging state is read from the headset's `0x2A` reply, so it is detected
+>   correctly. The headset is asked about once a minute instead of every 5 minutes, and right away when a USB device is
+>   plugged in or removed.
+>
+> Everything below is the original README.
+
 [![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/krisgfx)
 [![Donate with PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/krisgfx)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/krisgfx9)

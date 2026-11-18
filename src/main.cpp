@@ -313,7 +313,7 @@ Accent AccentFor(const DeviceStatus& s) { return g_brandColors ? BrandOf(s) : Ac
 HICON IconFor(int pct, bool charging, bool dim, Accent accent) {
     Rgb fg = Foreground();
     BrandColor bc = AccentColor(accent, g_lightTaskbar);
-    Rgb bar = charging        ? Rgb{ 0, 170, 255 }
+    Rgb bar = charging        ? Rgb{ 60, 220, 100 }
             : pct <= LOW_BATTERY ? Rgb{ 232, 32, 48 }
             : pct <= 30       ? Rgb{ 255, 150, 0 }
             : accent != Accent::None ? Rgb{ bc.r, bc.g, bc.b }
@@ -818,7 +818,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp) DestroyWindow(h);
             return 0;
         case WM_DEVICECHANGE:
-            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) RefreshSoon(2500);
+            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) {
+                ForgetHeadsetCache();  // a cable was plugged / unplugged: re-read charging right away
+                RefreshSoon(2500);
+            }
             return TRUE;
         case WM_POWERBROADCAST:
             if (wp == PBT_APMRESUMEAUTOMATIC) RefreshSoon(5000);

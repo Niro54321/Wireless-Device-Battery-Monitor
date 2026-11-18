@@ -357,6 +357,102 @@ Mask Halo(const Mask& m, int r) {
     return g;
 }
 
+// ---- Local change: hand-drawn headphones and charging battery (Synapse look) ---------------------
+// GDI draws white on black at 4x size; the result is averaged down into an antialiased mask.
+constexpr int kSS = 4;
+template <class F>
+Mask SuperMask(int w, int h, F draw) {
+    Mask m;
+    m.w = w; m.h = h;
+    int W = w * kSS, H = h * kSS;
+    HDC dc = CreateCompatibleDC(nullptr);
+    BITMAPINFO bi{};
+    bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
+    void* bits = nullptr;
+    HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HGDIOBJ ob = SelectObject(dc, bmp);
+    memset(bits, 0, (size_t)W * H * 4);
+    draw(dc, W, H);
+    GdiFlush();
+    auto* p = static_cast<DWORD*>(bits);
+    m.a.resize((size_t)w * h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int sum = 0;
+            for (int yy = 0; yy < kSS; yy++)
+                for (int xx = 0; xx < kSS; xx++) sum += p[(y * kSS + yy) * W + x * kSS + xx] & 0xFF;
+            m.a[(size_t)y * w + x] = (BYTE)(sum / (kSS * kSS));
+        }
+    SelectObject(dc, ob);
+    DeleteObject(bmp);
+    DeleteDC(dc);
+    return m;
+}
+
+// Over-ear headphones: a round headband and two rounded ear cups, outlined.
+Mask HeadphonesMask(int size) {
+    return SuperMask(size, size, [](HDC dc, int W, int H) {
+        int t = std::max(kSS, W * 12 / 100);  // stroke width
+        HPEN pen = CreatePen(PS_SOLID, t, RGB(255, 255, 255));
+        HGDIOBJ op = SelectObject(dc, pen);
+        HGDIOBJ obr = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        int cx = W / 2, cy = H * 52 / 100, r = W * 38 / 100;
+        Arc(dc, cx - r, cy - r, cx + r, cy + r, cx + r, cy, cx - r, cy);  // upper half, counter-clockwise
+        int cupW = W * 26 / 100, cupTop = H * 50 / 100, cupBot = H - t / 2 - 1, rad = cupW * 9 / 10;
+        int lx = cx - r - cupW / 2 + t / 2, rx = cx + r - cupW / 2 - t / 2;
+        RoundRect(dc, lx, cupTop, lx + cupW, cupBot, rad, rad);
+        RoundRect(dc, rx, cupTop, rx + cupW, cupBot, rad, rad);
+        SelectObject(dc, obr);
+        SelectObject(dc, op);
+        DeleteObject(pen);
+    });
+}
+
+// Upright battery, Synapse style: outline + cap (drawn in the text colour) and a full green body with
+// a lightning bolt cut out of it (drawn in `fill`). Both masks have the same size.
+void ChargingBatteryMasks(int w, int h, Mask& outline, Mask& fill) {
+    int capH = std::max(2, h / 8);
+    auto body = [=](int W, int H, int& l, int& tp, int& r, int& b, int& t) {
+        t = std::max(kSS, W * 13 / 100);
+        l = t / 2; r = W - t / 2; tp = capH * kSS + t / 2; b = H - t / 2;
+    };
+    outline = SuperMask(w, h, [&](HDC dc, int W, int H) {
+        int l, tp, r, b, t;
+        body(W, H, l, tp, r, b, t);
+        HPEN pen = CreatePen(PS_SOLID, t, RGB(255, 255, 255));
+        HGDIOBJ op = SelectObject(dc, pen);
+        HGDIOBJ obr = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        int rad = W * 30 / 100;
+        RoundRect(dc, l, tp, r, b, rad, rad);
+        SelectObject(dc, obr);
+        SelectObject(dc, op);
+        DeleteObject(pen);
+        RECT cap{ W * 30 / 100, 0, W - W * 30 / 100, capH * kSS + t / 2 };
+        FillRect(dc, &cap, (HBRUSH)GetStockObject(WHITE_BRUSH));
+    });
+    fill = SuperMask(w, h, [&](HDC dc, int W, int H) {
+        int l, tp, r, b, t;
+        body(W, H, l, tp, r, b, t);
+        int gap = t * 2 / 3;  // dark ring between outline and fill
+        HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
+        HGDIOBJ obr = SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        int il = l + t / 2 + gap, it = tp + t / 2 + gap, ir = r - t / 2 - gap, ib = b - t / 2 - gap;
+        int rad = (ir - il) * 30 / 100;
+        RoundRect(dc, il, it, ir + 1, ib + 1, rad, rad);
+        // Bolt cut out of the fill.
+        SelectObject(dc, GetStockObject(BLACK_BRUSH));
+        int bw = ir - il, bh = ib - it;
+        POINT bolt[6] = {
+            { il + bw * 72 / 100, it + bh * 4 / 100 },  { il + bw * 4 / 100, it + bh * 58 / 100 },
+            { il + bw * 44 / 100, it + bh * 58 / 100 }, { il + bw * 28 / 100, it + bh * 97 / 100 },
+            { il + bw * 96 / 100, it + bh * 40 / 100 }, { il + bw * 56 / 100, it + bh * 40 / 100 },
+        };
+        Polygon(dc, bolt, 6);
+        SelectObject(dc, obr);
+        SelectObject(dc, op);
+    });
+}
+
 // One drawn piece of the strip. Normal pieces follow each other from left to right. A piece with an
 // `anchor` (index of an earlier piece) is a caption: drawn over that piece, `bx`/`by` from its top-left
 // corner, and taking no room of its own. Branded devices add a glow behind the glyph and a level bar.
@@ -372,6 +468,8 @@ struct Piece {
     Mask halo;        // glow drawn behind the glyph (branded devices)
     int haloR = 0, haloAlpha = 0;
     int px = INT_MIN, py = 0;  // fixed top-left position (stacked and vertical layouts); INT_MIN = flow left to right
+    Mask m2;                   // optional second layer drawn over `m` in `color2` (charging battery fill)
+    Rgb color2{};
 };
 
 // Three arrangements of the same pieces:
@@ -383,9 +481,9 @@ struct Piece {
 std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
     Rgb fg = g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 };
     Rgb red = g_light ? Rgb{ 196, 30, 40 } : Rgb{ 255, 90, 90 };
-    Rgb charge = g_light ? Rgb{ 0, 120, 212 } : Rgb{ 96, 205, 255 };
+    Rgb charge = g_light ? Rgb{ 16, 150, 60 } : Rgb{ 60, 220, 100 };  // green bolt while charging
     HFONT icons = MakeFont(Px(16), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
-    HFONT bolt = MakeFont(Px(11), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
+    HFONT bolt = MakeFont(Px(13), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
     HFONT text = MakeFont(Px(13), FW_NORMAL, L"Segoe UI Variable Text", L"Segoe UI", Px(12));
     HFONT caption = MakeFont(std::max(8, Px(7)), FW_SEMIBOLD, L"Segoe UI Variable Text", L"Segoe UI");  // never under 8 px
 
@@ -402,7 +500,9 @@ std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
         bool branded = it.accent != Accent::None;
         BrandColor bc = AccentColor(it.accent, g_light);
         Rgb accent{ bc.r, bc.g, bc.b };
-        Piece icon{ RenderMask(std::wstring(1, Glyph(it.kind, it.bluetooth)), icons, g_light), branded ? accent : fg, a, Px(5) };
+        Mask glyphMask = it.kind == DeviceKind::Headset ? HeadphonesMask(Px(18))
+                                                         : RenderMask(std::wstring(1, Glyph(it.kind, it.bluetooth)), icons, g_light);
+        Piece icon{ glyphMask, branded ? accent : fg, a, Px(6) };
         if (branded && !it.dim) {
             icon.haloR = Px(3);
             icon.halo = Halo(icon.m, icon.haloR);
@@ -410,13 +510,18 @@ std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
         }
         out.push_back(std::move(icon));
         std::wstring t = !it.text.empty() ? it.text : it.percent >= 0 ? std::to_wstring(it.percent) + L"%" : L"?";
-        Piece label{ RenderMask(t, text, g_light), tc, a, it.charging ? Px(2) : 0 };
+        Piece label{ RenderMask(t, text, g_light), tc, a, it.charging ? Px(4) : 0 };
         if (branded && it.percent >= 0) {
             label.barPct = it.percent;
             label.barColor = it.low ? red : accent;
         }
         out.push_back(std::move(label));
-        if (it.charging) out.push_back({ RenderMask(std::wstring(1, kBolt), bolt, g_light), charge, a, 0 });
+        if (it.charging) {  // upright battery: outline in the text colour, green body with a bolt cut out
+            Piece b{ Mask{}, fg, a, 0 };
+            ChargingBatteryMasks(Px(10), Px(18), b.m, b.m2);
+            b.color2 = charge;
+            out.push_back(std::move(b));
+        }
         out.back().gapAfter = i + 1 < g_items.size() ? Px(14) : 0;
         if (!it.label.empty()) {  // tiny caption in the bottom-right corner of the icon
             Piece c{ RenderMask(it.label, caption, g_light), fg, a, 0 };
@@ -545,6 +650,7 @@ void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size) {
                     if (ox || oy) cv.Draw(p.m, xs[i] + ox, ys[i] + oy, barColor, 255);
         }
         cv.Draw(p.m, xs[i], ys[i], p.color, p.alpha);
+        if (!p.m2.a.empty()) cv.Draw(p.m2, xs[i], ys[i], p.color2, p.alpha);
     }
 
     HDC screen = GetDC(nullptr);

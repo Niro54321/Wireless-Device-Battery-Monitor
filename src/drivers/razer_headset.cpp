@@ -41,12 +41,16 @@
 #include "drivers.h"
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <map>
 
 namespace {
 
-constexpr ULONGLONG kMinIntervalMs = 5 * 60 * 1000;
+// Local change: 60 s instead of 5 min, so the charging bolt follows the cable within about a minute
+// (still far from the "every few seconds" that drops the link).
+constexpr ULONGLONG kMinIntervalMs = 60 * 1000 - 5000;  // a little under the 60 s poll so each poll asks
+std::atomic<bool> g_forget{ false };
 
 std::vector<BYTE> Packet(BYTE dir, BYTE cls) {
     std::vector<BYTE> b(64, 0);
@@ -473,7 +477,10 @@ void PollBlackSharkV3X(PollContext& ctx) {
 
 }  // namespace
 
+void ForgetHeadsetCache() { g_forget = true; }
+
 void PollRazerHeadsets(PollContext& ctx) {
+    if (g_forget.exchange(false)) g_cache.clear();  // only the poll thread touches g_cache
     PollBlackSharkV2HyperSpeed(ctx);
     PollBarracudaX(ctx);
     PollBlackSharkV2Pro2020(ctx);
@@ -505,6 +512,10 @@ void PollRazerHeadsets(PollContext& ctx) {
         s.via = L"2.4 GHz receiver";
         s.percent = r[13];
         s.charging = r[14] != 0;
+        // Local change: on the V3 Pro (0576) the 0x21 reply keeps [14] at 0 even while charging;
+        // the charging state comes from GET 0x2A, args[0] at [13] (01 = charging), checked with a probe.
+        std::vector<BYTE> c;
+        if (Get(d, 0x2A, c)) s.charging = c[13] != 0;
         cache = { GetTickCount64(), s, true };
         ctx.Add(s, 0x1532, pid);
     }
