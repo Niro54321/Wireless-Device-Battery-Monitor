@@ -2,15 +2,19 @@
 
 > **Headset-only fork.** This is a modified version of
 > [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0).
-> | Charging (animated) | Charging |
+>
+> | Charging (animated) | Full |
 > | --- | --- |
 > | ![Charging animation](docs/headset-charging.gif) | ![Charging](docs/headset-charging.png) |
 >
 > Changes from the original:
 > - Only headsets, headphones and earbuds are shown. Mice, keyboards, controllers and phones are left out.
-> - The headset icon is a drawn pair of over-ear headphones.
-> - While charging, an upright battery with a lightning bolt appears next to the percentage; its green fill rises from empty to full in a loop, and it goes away
->   when the charger is unplugged.
+> - Each headset is a pair of headphones inside a ring. The ring shows the battery level, filling clockwise from
+>   12 o'clock: red at 20% and under, orange up to 40%, green above. The headphones stay white. No number is shown;
+>   hover the ring to see the percentage.
+> - While charging, the ring turns green and keeps sweeping a full turn, then starts again.
+> - When a charging headset reaches 100% you hear a chime and get a "Fully charged" notification.
+>   `WirelessBattery.exe --test-full` shows that notification right away, for a test.
 > - Razer BlackShark V3 Pro: the charging state is read from the headset's `0x2A` reply, so it is detected
 >   correctly. The headset is asked about once a minute instead of every 5 minutes, and right away when a USB device is
 >   plugged in or removed.

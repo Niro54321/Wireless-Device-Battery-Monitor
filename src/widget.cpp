@@ -5,6 +5,7 @@
 #include <commctrl.h>
 #include <uiautomation.h>
 #include <algorithm>
+#include <cmath>
 #include <climits>
 
 namespace {
@@ -466,10 +467,48 @@ void ChargingBatteryMasks(int w, int h, int level, Mask& outline, Mask& fill) {
 
 // Charging animation: the green body fills from empty to full, holds a moment, and starts again.
 constexpr UINT_PTR kAnimTimer = 77;
-constexpr UINT kAnimMs = 110;
-constexpr int kAnimSteps = 10, kAnimHold = 4;  // 0..10 = 0..100 %, then a few frames held full
+constexpr UINT kAnimMs = 40;
+constexpr int kAnimSteps = 36, kAnimHold = 12;  // 0..36 = 0..100 % (~1.5 s), then ~0.5 s held full
 int g_animFrame = kAnimSteps;                   // full until the first tick
 int AnimLevel() { return std::min(g_animFrame % (kAnimSteps + 1 + kAnimHold), kAnimSteps) * 100 / kAnimSteps; }
+
+// Ring around the headphones: a faint full track, and an arc from 12 o'clock clockwise for `level`
+// percent with round ends. `phones` is the headphones icon centred in the same square.
+void RingMasks(int d, int stroke, int iconSize, int level, Mask& phones, Mask& track, Mask& arc) {
+    auto ring = [=](bool full) {
+        return SuperMask(d, d, [=](HDC dc, int W, int H) {
+            int t = stroke * kSS;
+            int r = (W - t) / 2 - kSS, cx = W / 2, cy = H / 2;
+            LOGBRUSH lb{ BS_SOLID, RGB(255, 255, 255), 0 };
+            HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_ENDCAP_ROUND, t, &lb, 0, nullptr);
+            HGDIOBJ op = SelectObject(dc, pen);
+            HGDIOBJ obr = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            if (full) {
+                Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
+            } else if (level > 0) {
+                SetArcDirection(dc, AD_CLOCKWISE);
+                if (level >= 100) {
+                    Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
+                } else {
+                    double a = level / 100.0 * 2 * 3.14159265358979;
+                    int ex = cx + (int)(r * std::sin(a)), ey = cy - (int)(r * std::cos(a));
+                    Arc(dc, cx - r, cy - r, cx + r, cy + r, cx, cy - r, ex, ey);
+                }
+            }
+            SelectObject(dc, obr);
+            SelectObject(dc, op);
+            DeleteObject(pen);
+        });
+    };
+    track = ring(true);
+    arc = ring(false);
+    Mask icon = HeadphonesMask(iconSize);
+    phones.w = d; phones.h = d;
+    phones.a.assign((size_t)d * d, 0);
+    int ox = (d - icon.w) / 2, oy = (d - icon.h) / 2;
+    for (int y = 0; y < icon.h; y++)
+        for (int x = 0; x < icon.w; x++) phones.a[(size_t)(oy + y) * d + ox + x] = icon.a[(size_t)y * icon.w + x];
+}
 
 // One drawn piece of the strip. Normal pieces follow each other from left to right. A piece with an
 // `anchor` (index of an earlier piece) is a caption: drawn over that piece, `bx`/`by` from its top-left
@@ -486,8 +525,11 @@ struct Piece {
     Mask halo;        // glow drawn behind the glyph (branded devices)
     int haloR = 0, haloAlpha = 0;
     int px = INT_MIN, py = 0;  // fixed top-left position (stacked and vertical layouts); INT_MIN = flow left to right
-    Mask m2;                   // optional second layer drawn over `m` in `color2` (charging battery fill)
+    Mask m2;                   // optional second layer drawn over `m` in `color2` (ring track / battery fill)
     Rgb color2{};
+    int alpha2 = -1;           // -1 = the piece's alpha
+    Mask m3;                   // optional third layer (ring arc)
+    Rgb color3{};
 };
 
 // Three arrangements of the same pieces:
@@ -514,10 +556,29 @@ std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
         int a = it.dim ? 120 : 255;
         Rgb tc = it.low ? red : fg;
         size_t glyph = out.size();
-        slots.push_back({ (int)glyph, (int)glyph + 1, it.charging ? (int)glyph + 2 : -1 });
+        slots.push_back({ (int)glyph, (int)glyph + 1, it.charging && it.kind != DeviceKind::Headset ? (int)glyph + 2 : -1 });
         bool branded = it.accent != Accent::None;
         BrandColor bc = AccentColor(it.accent, g_light);
         Rgb accent{ bc.r, bc.g, bc.b };
+        if (it.kind == DeviceKind::Headset) {
+            // Local change: ring around the headphones, no number (the percentage is in the hover tooltip).
+            // Arc colour by level: red when low, orange in between, green above; charging = green arc
+            // sweeping a full turn in a loop.
+            Rgb red2 = g_light ? Rgb{ 210, 40, 50 } : Rgb{ 240, 70, 70 };
+            Rgb orange = g_light ? Rgb{ 215, 120, 0 } : Rgb{ 240, 150, 50 };
+            int pct = it.percent;
+            int level = it.charging ? AnimLevel() : std::max(0, pct);
+            Rgb arcColor = it.charging ? charge : pct <= 20 ? red2 : pct <= 40 ? orange : charge;
+            Piece ring{ Mask{}, fg, a, 0 };
+            RingMasks(Px(30), std::max(2, Px(3)), Px(15), level, ring.m, ring.m2, ring.m3);
+            ring.color2 = fg;
+            ring.alpha2 = (g_light ? 45 : 60) * a / 255;
+            ring.color3 = arcColor;
+            out.push_back(std::move(ring));
+            out.push_back({ Mask{}, fg, a, 0 });  // empty label slot, keeps the stacked / vertical layouts working
+            out.back().gapAfter = i + 1 < g_items.size() ? Px(10) : 0;
+            continue;
+        }
         Mask glyphMask = it.kind == DeviceKind::Headset ? HeadphonesMask(Px(18))
                                                          : RenderMask(std::wstring(1, Glyph(it.kind, it.bluetooth)), icons, g_light);
         Piece icon{ glyphMask, branded ? accent : fg, a, Px(6) };
@@ -668,7 +729,8 @@ void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size) {
                     if (ox || oy) cv.Draw(p.m, xs[i] + ox, ys[i] + oy, barColor, 255);
         }
         cv.Draw(p.m, xs[i], ys[i], p.color, p.alpha);
-        if (!p.m2.a.empty()) cv.Draw(p.m2, xs[i], ys[i], p.color2, p.alpha);
+        if (!p.m2.a.empty()) cv.Draw(p.m2, xs[i], ys[i], p.color2, p.alpha2 >= 0 ? p.alpha2 : p.alpha);
+        if (!p.m3.a.empty()) cv.Draw(p.m3, xs[i], ys[i], p.color3, p.alpha);
     }
 
     HDC screen = GetDC(nullptr);

@@ -1,6 +1,7 @@
 // Wireless Battery - tray app showing the battery level of wireless mice, headsets and Bluetooth devices.
 #include <windows.h>
 #include <shellapi.h>
+#include <mmsystem.h>
 #include <dbt.h>
 #include <initguid.h>
 #include <hidclass.h>
@@ -26,6 +27,9 @@ constexpr UINT WM_RESULTS = WM_APP + 2;
 constexpr UINT WM_WIDGET_CLICK = WM_APP + 3;
 constexpr UINT_PTR TIMER_DEBOUNCE = 1;
 constexpr UINT_PTR TIMER_WIDGET = 2;
+constexpr UINT_PTR TIMER_FULL_NOTE = 3;   // removes the temporary "fully charged" notification icon
+constexpr UINT FULL_NOTE_ID = 0xF00D;     // tray id of that temporary icon
+constexpr UINT WM_TEST_FULL = WM_APP + 9; // `--test-full`: show the "fully charged" notification now
 constexpr DWORD POLL_INTERVAL_MS = 60 * 1000;
 constexpr int LOW_BATTERY = 15;
 constexpr UINT PLACEHOLDER_ID = 1;
@@ -65,6 +69,7 @@ struct TrayEntry {
     ULONGLONG lastSeen = 0;
     bool added = false;
     bool lowWarned = false;
+    bool chargingBelowFull = false;  // seen charging under 100% since the last "fully charged" chime
     std::wstring iconSig;    // what the current icon shows, to avoid needless redraws
     HICON icon = nullptr;
 };
@@ -390,8 +395,41 @@ void UpdatePlaceholder() {
     }
 }
 
+// Local change: chime + notification when a charging device reaches 100%. Works in widget mode too,
+// where devices have no tray icon: a temporary icon carries the notification and is removed after 15 s.
+void NotifyFullyCharged(const DeviceStatus& s) {
+    PlaySoundW(L"Notification.Default", nullptr, SND_ALIAS | SND_ASYNC);
+    std::wstring title = T(L"Fully charged");
+    std::wstring body = TF(L"{name} is fully charged", { { L"name", s.name } });
+    NOTIFYICONDATAW nid{ sizeof(nid) };
+    nid.hWnd = g_hwnd;
+    nid.uID = FULL_NOTE_ID;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
+    nid.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    if (!nid.hIcon) nid.hIcon = LoadIconW(nullptr, IDI_INFORMATION);
+    CopyTip(nid.szTip, ARRAYSIZE(nid.szTip), L"Wireless Battery");
+    CopyTip(nid.szInfoTitle, ARRAYSIZE(nid.szInfoTitle), title);
+    CopyTip(nid.szInfo, ARRAYSIZE(nid.szInfo), body);
+    nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;  // the chime above is the sound
+    Shell_NotifyIconW(NIM_DELETE, &nid);
+    Shell_NotifyIconW(NIM_ADD, &nid);
+    SetTimer(g_hwnd, TIMER_FULL_NOTE, 15000, nullptr);
+}
+
+void CheckFullyCharged(TrayEntry& e) {
+    const auto& s = e.st;
+    if (!s.connected || s.percent < 0) return;
+    if (s.charging && s.percent < 100) e.chargingBelowFull = true;
+    else if (!s.charging && s.percent < 100) e.chargingBelowFull = false;  // unplugged before full
+    if (s.percent >= 100 && e.chargingBelowFull) {
+        e.chargingBelowFull = false;
+        NotifyFullyCharged(s);
+    }
+}
+
 void ApplyEntry(TrayEntry& e) {
     const auto& s = e.st;
+    CheckFullyCharged(e);
     bool visible = s.connected && !g_useWidget && !IsEntryHidden(e);
     if (!visible) {
         if (e.added) { TrayDelete(e.uid); e.added = false; }
@@ -817,6 +855,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_ENDSESSION:  // sign-out / shutdown / installer restart manager
             if (wp) DestroyWindow(h);
             return 0;
+        case WM_TEST_FULL: {
+            DeviceStatus s;
+            s.name = L"Headset";
+            for (auto& [k, e] : g_entries)
+                if (e.st.connected) { s.name = e.st.name; break; }
+            NotifyFullyCharged(s);
+            return 0;
+        }
         case WM_DEVICECHANGE:
             if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) {
                 ForgetHeadsetCache();  // a cable was plugged / unplugged: re-read charging right away
@@ -829,6 +875,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == TIMER_DEBOUNCE) { KillTimer(h, TIMER_DEBOUNCE); SetEvent(g_refreshEvt); }
             if (wp == TIMER_WIDGET) Reconcile();
+            if (wp == TIMER_FULL_NOTE) {
+                KillTimer(h, TIMER_FULL_NOTE);
+                TrayDelete(FULL_NOTE_ID);
+            }
             return 0;
         case WM_SETTINGCHANGE:
             if (lp && !lstrcmpW((LPCWSTR)lp, L"ImmersiveColorSet")) {
@@ -924,6 +974,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        return 0;
+    }
+    if (cmdLine && wcsstr(cmdLine, L"--test-full")) {  // ask the running instance to show the chime + notification
+        if (HWND w = FindWindowW(L"WirelessBatteryWnd", nullptr)) PostMessageW(w, WM_TEST_FULL, 0, 0);
         return 0;
     }
     if (cmdLine && wcsstr(cmdLine, L"--quit")) {  // used by the installer before upgrading/uninstalling
