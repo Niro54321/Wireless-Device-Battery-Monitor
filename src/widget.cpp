@@ -408,39 +408,19 @@ Mask HeadphonesMask(int size) {
     });
 }
 
-// Upright battery, Synapse style: outline + cap (drawn in the text colour) and a full green body with
-// a lightning bolt cut out of it (drawn in `fill`). Both masks have the same size.
-void ChargingBatteryMasks(int w, int h, Mask& outline, Mask& fill) {
+// Upright battery, Synapse style: outline, cap and a white bolt (drawn in the text colour) and a green
+// body (drawn in `fill`) filled from the bottom up to `level` percent, with the bolt cut out so it stays
+// white. The charging animation calls this with a rising level. Both masks have the same size.
+void ChargingBatteryMasks(int w, int h, int level, Mask& outline, Mask& fill) {
     int capH = std::max(2, h / 8);
-    auto body = [=](int W, int H, int& l, int& tp, int& r, int& b, int& t) {
+    // Inner area (inside the outline and its dark gap), in supersampled pixels.
+    auto geom = [=](int W, int H, int& l, int& tp, int& r, int& b, int& t, int& il, int& it, int& ir, int& ib) {
         t = std::max(kSS, W * 13 / 100);
         l = t / 2; r = W - t / 2; tp = capH * kSS + t / 2; b = H - t / 2;
+        int gap = t * 2 / 3;
+        il = l + t / 2 + gap; it = tp + t / 2 + gap; ir = r - t / 2 - gap; ib = b - t / 2 - gap;
     };
-    outline = SuperMask(w, h, [&](HDC dc, int W, int H) {
-        int l, tp, r, b, t;
-        body(W, H, l, tp, r, b, t);
-        HPEN pen = CreatePen(PS_SOLID, t, RGB(255, 255, 255));
-        HGDIOBJ op = SelectObject(dc, pen);
-        HGDIOBJ obr = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        int rad = W * 30 / 100;
-        RoundRect(dc, l, tp, r, b, rad, rad);
-        SelectObject(dc, obr);
-        SelectObject(dc, op);
-        DeleteObject(pen);
-        RECT cap{ W * 30 / 100, 0, W - W * 30 / 100, capH * kSS + t / 2 };
-        FillRect(dc, &cap, (HBRUSH)GetStockObject(WHITE_BRUSH));
-    });
-    fill = SuperMask(w, h, [&](HDC dc, int W, int H) {
-        int l, tp, r, b, t;
-        body(W, H, l, tp, r, b, t);
-        int gap = t * 2 / 3;  // dark ring between outline and fill
-        HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
-        HGDIOBJ obr = SelectObject(dc, GetStockObject(WHITE_BRUSH));
-        int il = l + t / 2 + gap, it = tp + t / 2 + gap, ir = r - t / 2 - gap, ib = b - t / 2 - gap;
-        int rad = (ir - il) * 30 / 100;
-        RoundRect(dc, il, it, ir + 1, ib + 1, rad, rad);
-        // Bolt cut out of the fill.
-        SelectObject(dc, GetStockObject(BLACK_BRUSH));
+    auto drawBolt = [](HDC dc, int il, int it, int ir, int ib) {
         int bw = ir - il, bh = ib - it;
         POINT bolt[6] = {
             { il + bw * 72 / 100, it + bh * 4 / 100 },  { il + bw * 4 / 100, it + bh * 58 / 100 },
@@ -448,10 +428,48 @@ void ChargingBatteryMasks(int w, int h, Mask& outline, Mask& fill) {
             { il + bw * 96 / 100, it + bh * 40 / 100 }, { il + bw * 56 / 100, it + bh * 40 / 100 },
         };
         Polygon(dc, bolt, 6);
+    };
+    outline = SuperMask(w, h, [&](HDC dc, int W, int H) {
+        int l, tp, r, b, t, il, it, ir, ib;
+        geom(W, H, l, tp, r, b, t, il, it, ir, ib);
+        HPEN pen = CreatePen(PS_SOLID, t, RGB(255, 255, 255));
+        HGDIOBJ op = SelectObject(dc, pen);
+        HGDIOBJ obr = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        int rad = W * 30 / 100;
+        RoundRect(dc, l, tp, r, b, rad, rad);
+        RECT cap{ W * 30 / 100, 0, W - W * 30 / 100, capH * kSS + t / 2 };
+        FillRect(dc, &cap, (HBRUSH)GetStockObject(WHITE_BRUSH));
+        SelectObject(dc, GetStockObject(NULL_PEN));
+        SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        drawBolt(dc, il, it, ir, ib);
+        SelectObject(dc, obr);
+        SelectObject(dc, op);
+        DeleteObject(pen);
+    });
+    fill = SuperMask(w, h, [&](HDC dc, int W, int H) {
+        int l, tp, r, b, t, il, it, ir, ib;
+        geom(W, H, l, tp, r, b, t, il, it, ir, ib);
+        HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
+        HGDIOBJ obr = SelectObject(dc, GetStockObject(WHITE_BRUSH));
+        int rad = (ir - il) * 30 / 100;
+        RoundRect(dc, il, it, ir + 1, ib + 1, rad, rad);
+        // Keep only the bottom `level` percent, then cut the bolt out.
+        int top = ib - (ib - it) * std::max(0, std::min(100, level)) / 100;
+        RECT above{ 0, 0, W, top };
+        FillRect(dc, &above, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        SelectObject(dc, GetStockObject(BLACK_BRUSH));
+        drawBolt(dc, il, it, ir, ib);
         SelectObject(dc, obr);
         SelectObject(dc, op);
     });
 }
+
+// Charging animation: the green body fills from empty to full, holds a moment, and starts again.
+constexpr UINT_PTR kAnimTimer = 77;
+constexpr UINT kAnimMs = 110;
+constexpr int kAnimSteps = 10, kAnimHold = 4;  // 0..10 = 0..100 %, then a few frames held full
+int g_animFrame = kAnimSteps;                   // full until the first tick
+int AnimLevel() { return std::min(g_animFrame % (kAnimSteps + 1 + kAnimHold), kAnimSteps) * 100 / kAnimSteps; }
 
 // One drawn piece of the strip. Normal pieces follow each other from left to right. A piece with an
 // `anchor` (index of an earlier piece) is a caption: drawn over that piece, `bx`/`by` from its top-left
@@ -518,7 +536,7 @@ std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
         out.push_back(std::move(label));
         if (it.charging) {  // upright battery: outline in the text colour, green body with a bolt cut out
             Piece b{ Mask{}, fg, a, 0 };
-            ChargingBatteryMasks(Px(10), Px(18), b.m, b.m2);
+            ChargingBatteryMasks(Px(10), Px(18), AnimLevel(), b.m, b.m2);
             b.color2 = charge;
             out.push_back(std::move(b));
         }
@@ -893,8 +911,24 @@ LRESULT CALLBACK WidgetProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
+        case WM_TIMER:
+            if (wp == kAnimTimer && h == g_wnd) {
+                g_animFrame++;
+                PaintAll();
+                return 0;
+            }
+            break;
     }
     return DefWindowProcW(h, msg, wp, lp);
+}
+
+// Runs the animation timer only while some device is charging.
+void UpdateAnimTimer() {
+    if (!g_wnd) return;
+    bool any = false;
+    for (const auto& it : g_items) any = any || it.charging;
+    if (any) SetTimer(g_wnd, kAnimTimer, kAnimMs, nullptr);
+    else KillTimer(g_wnd, kAnimTimer);
 }
 
 }  // namespace
@@ -951,6 +985,7 @@ bool Create(HINSTANCE inst, HWND notifyWnd, UINT clickMsg, bool lightTheme) {
     g_lastW = -1;
     Reposition();
     if (!g_primaryHidden) ShowWindow(g_wnd, SW_SHOWNOACTIVATE);  // hidden when only another monitor is chosen
+    UpdateAnimTimer();
     return true;
 }
 
@@ -989,6 +1024,7 @@ void SetItems(const std::vector<WidgetItem>& items, const std::wstring& tooltip)
             SendMessageW(g_tip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
         }
     }
+    UpdateAnimTimer();
     PaintAll();
     Reposition();
 }
