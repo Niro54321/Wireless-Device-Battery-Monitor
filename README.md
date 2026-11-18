@@ -2,6 +2,10 @@
 
 > **Headset-only fork.** This is a modified version of
 > [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0).
+> | Charging (animated) | Charging |
+> | --- | --- |
+> | ![Charging animation](docs/headset-charging.gif) | ![Charging](docs/headset-charging.png) |
+>
 > Changes from the original:
 > - Only headsets, headphones and earbuds are shown. Mice, keyboards, controllers and phones are left out.
 > - The headset icon is a drawn pair of over-ear headphones.
