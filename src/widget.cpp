@@ -674,6 +674,36 @@ std::vector<Piece> Layout(int barW, int barH, int& width, int& height) {
 }
 
 // Draws the strip for one window: the primary one or a mirror on a secondary taskbar.
+// `--demo --save-preview <file.bmp>`: the next paint of the primary strip is also written to a BMP over
+// the taskbar colour (used for the README pictures; the screen capture picks up taskbar icons under it).
+std::wstring g_previewPath;
+
+void WritePreview(const Canvas& cv, Rgb bg) {
+    int W = cv.w, H = cv.h, stride = (W * 3 + 3) & ~3;
+    std::vector<BYTE> data((size_t)stride * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            DWORD d = cv.px[(size_t)y * W + x];
+            int a = d >> 24, inv = 255 - a;
+            BYTE* o = &data[(size_t)(H - 1 - y) * stride + x * 3];  // bottom-up rows
+            o[0] = (BYTE)std::min(255, (int)(d & 255) + bg.b * inv / 255);
+            o[1] = (BYTE)std::min(255, (int)((d >> 8) & 255) + bg.g * inv / 255);
+            o[2] = (BYTE)std::min(255, (int)((d >> 16) & 255) + bg.r * inv / 255);
+        }
+    BITMAPFILEHEADER fh{};
+    BITMAPINFOHEADER ih{ sizeof(ih), W, H, 1, 24, BI_RGB };
+    fh.bfType = 0x4D42;
+    fh.bfOffBits = sizeof(fh) + sizeof(ih);
+    fh.bfSize = fh.bfOffBits + (DWORD)data.size();
+    HANDLE f = CreateFileW(g_previewPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD wr;
+    WriteFile(f, &fh, sizeof(fh), &wr, nullptr);
+    WriteFile(f, &ih, sizeof(ih), &wr, nullptr);
+    WriteFile(f, data.data(), (DWORD)data.size(), &wr, nullptr);
+    CloseHandle(f);
+}
+
 void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size) {
     RECT bar;
     GetClientRect(taskbar, &bar);
@@ -731,6 +761,11 @@ void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size) {
         cv.Draw(p.m, xs[i], ys[i], p.color, p.alpha);
         if (!p.m2.a.empty()) cv.Draw(p.m2, xs[i], ys[i], p.color2, p.alpha2 >= 0 ? p.alpha2 : p.alpha);
         if (!p.m3.a.empty()) cv.Draw(p.m3, xs[i], ys[i], p.color3, p.alpha);
+    }
+
+    if (!g_previewPath.empty() && wnd == g_wnd) {
+        WritePreview(cv, barColor);
+        g_previewPath.clear();
     }
 
     HDC screen = GetDC(nullptr);
@@ -1089,6 +1124,11 @@ void SetItems(const std::vector<WidgetItem>& items, const std::wstring& tooltip)
     UpdateAnimTimer();
     PaintAll();
     Reposition();
+}
+
+void SavePreview(const std::wstring& path) {
+    g_previewPath = path;
+    Paint();
 }
 
 void SetLightTheme(bool light) {

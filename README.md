@@ -7,6 +7,17 @@
 > | --- | --- |
 > | ![Charging animation](docs/headset-charging.gif) | ![Charging](docs/headset-charging.png) |
 >
+> **Ring colours by battery level** (the ring fills clockwise from 12 o'clock):
+>
+> | 10% | 20% | 21% | 40% | 41% | 80% | 100% |
+> | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+> | ![10%](docs/level-10.png) | ![20%](docs/level-20.png) | ![21%](docs/level-21.png) | ![40%](docs/level-40.png) | ![41%](docs/level-41.png) | ![80%](docs/level-80.png) | ![100%](docs/level-100.png) |
+> | red | red | orange | orange | green | green | green |
+>
+> - **Red:** 20% and under, time to charge.
+> - **Orange:** 21% to 40%.
+> - **Green:** above 40%, and always while charging.
+>
 > Changes from the original:
 > - Only headsets, headphones and earbuds are shown. Mice, keyboards, controllers and phones are left out.
 > - Each headset is a pair of headphones inside a ring. The ring shows the battery level, filling clockwise from
@@ -15,6 +26,8 @@
 > - While charging, the ring turns green and keeps sweeping a full turn, then starts again.
 > - When a charging headset reaches 100% you hear a chime and get a "Fully charged" notification.
 >   `WirelessBattery.exe --test-full` shows that notification right away, for a test.
+> - `WirelessBattery.exe --demo` shows sample headsets at 10, 20, 21, 40, 41, 80 and 100% plus one charging.
+>   `--demo --save-preview file.bmp` saves that strip to an image and exits (used for the pictures above).
 > - Razer BlackShark V3 Pro: the charging state is read from the headset's `0x2A` reply, so it is detected
 >   correctly. The headset is asked about once a minute instead of every 5 minutes, and right away when a USB device is
 >   plugged in or removed.

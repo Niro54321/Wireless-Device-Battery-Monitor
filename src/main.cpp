@@ -778,6 +778,8 @@ void ShowMenu() {
 // brand colors without owning the hardware. Keys, vendor ids and names are mixed on purpose, so every way
 // of recognising a brand gets used.
 bool g_demo = false;
+std::wstring g_savePreview;  // `--demo --save-preview <file.bmp>`: save the widget strip and exit
+bool g_gotResults = false;
 
 std::vector<DeviceStatus> DemoDevices() {
     auto make = [](const wchar_t* key, const wchar_t* name, DeviceKind kind, int pct, unsigned short vid, bool charging) {
@@ -791,23 +793,17 @@ std::vector<DeviceStatus> DemoDevices() {
         s.via = L"demo";
         return s;
     };
+    // Local change: headset-only fork, so the demo shows headsets at the levels where the ring changes
+    // colour (red <= 20%, orange 21-40%, green above), then one charging.
     return {
-        make(L"razer:demo", L"Razer DeathAdder V3 Pro", DeviceKind::Mouse, 78, 0x1532, false),
-        make(L"demo:logi", L"Logitech G PRO X 2 LIGHTSPEED", DeviceKind::Headset, 64, 0x046D, false),
-        make(L"steelseries:demo", L"SteelSeries Arctis Nova 7", DeviceKind::Headset, 55, 0, false),
-        make(L"hsc:1b1c:0a6b", L"Corsair HS80 RGB Wireless", DeviceKind::Headset, 81, 0x1B1C, false),
-        make(L"hyperx:demo", L"HyperX Cloud III Wireless", DeviceKind::Headset, 47, 0, false),
-        make(L"rog:demo", L"ROG Harpe Ace", DeviceKind::Mouse, 90, 0, false),
-        make(L"zowie:demo", L"ZOWIE EC2-CW", DeviceKind::Mouse, 66, 0x04A5, false),
-        make(L"bt:demo-ps", L"Wireless Controller", DeviceKind::Gamepad, 38, 0x054C, false),
-        make(L"xbox:demo", L"Xbox Wireless Controller", DeviceKind::Gamepad, 72, 0x045E, false),
-        make(L"bt:demo-buds", L"Galaxy Buds3 Pro", DeviceKind::Headset, 59, 0, false),
-        make(L"airpods:demo", L"AirPods Pro", DeviceKind::Headset, 85, 0, false),
-        make(L"jabra:demo", L"Jabra Evolve2 65", DeviceKind::Headset, 23, 0x0B0E, false),
-        make(L"jbl:demo", L"JBL Quantum 910", DeviceKind::Headset, 70, 0x0ECB, false),
-        make(L"coolermaster:demo", L"Cooler Master MM712", DeviceKind::Mouse, 12, 0x2516, false),
-        make(L"steam:demo", L"Steam Controller", DeviceKind::Gamepad, 50, 0x28DE, true),
-        make(L"bt:demo-plain", L"Bluetooth Headphones", DeviceKind::Headset, 100, 0, false),
+        make(L"demo:h10", L"Demo 1: headset 10%", DeviceKind::Headset, 10, 0, false),
+        make(L"demo:h20", L"Demo 2: headset 20%", DeviceKind::Headset, 20, 0, false),
+        make(L"demo:h21", L"Demo 3: headset 21%", DeviceKind::Headset, 21, 0, false),
+        make(L"demo:h40", L"Demo 4: headset 40%", DeviceKind::Headset, 40, 0, false),
+        make(L"demo:h41", L"Demo 5: headset 41%", DeviceKind::Headset, 41, 0, false),
+        make(L"demo:h80", L"Demo 6: headset 80%", DeviceKind::Headset, 80, 0, false),
+        make(L"demo:h100", L"Demo 7: headset 100%", DeviceKind::Headset, 100, 0, false),
+        make(L"demo:hchg", L"Demo 8: headset charging", DeviceKind::Headset, 55, 0, true),
     };
 }
 
@@ -840,6 +836,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             auto* v = reinterpret_cast<std::vector<DeviceStatus>*>(lp);
             OnResults(*v);
             delete v;
+            g_gotResults = true;
             return 0;
         }
         case WM_TRAY:
@@ -874,7 +871,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         case WM_TIMER:
             if (wp == TIMER_DEBOUNCE) { KillTimer(h, TIMER_DEBOUNCE); SetEvent(g_refreshEvt); }
-            if (wp == TIMER_WIDGET) Reconcile();
+            if (wp == TIMER_WIDGET) {
+                Reconcile();
+                if (!g_savePreview.empty() && g_gotResults && widget::Alive()) {
+                    widget::SavePreview(g_savePreview);
+                    DestroyWindow(h);
+                    return 0;
+                }
+            }
             if (wp == TIMER_FULL_NOTE) {
                 KillTimer(h, TIMER_FULL_NOTE);
                 TrayDelete(FULL_NOTE_ID);
@@ -989,6 +993,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     }
     g_inst = inst;
     g_demo = cmdLine && wcsstr(cmdLine, L"--demo");
+    if (const wchar_t* p = cmdLine ? wcsstr(cmdLine, L"--save-preview ") : nullptr) {
+        p += wcslen(L"--save-preview ");
+        while (*p == L' ') p++;
+        bool quoted = *p == L'"';
+        if (quoted) p++;
+        const wchar_t* e = p;
+        while (*e && (quoted ? *e != L'"' : *e != L' ')) e++;
+        g_savePreview.assign(p, e);
+    }
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\WirelessBatteryTray");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;

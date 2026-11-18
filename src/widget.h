@@ -26,6 +26,8 @@ bool Create(HINSTANCE inst, HWND notifyWnd, UINT clickMsg, bool lightTheme);
 void Destroy();
 bool Alive();
 void SetItems(const std::vector<WidgetItem>& items, const std::wstring& tooltip);
+// Writes the strip as it is drawn now to a .bmp over the taskbar colour (`--demo --save-preview`).
+void SavePreview(const std::wstring& path);
 void SetLightTheme(bool light);
 // Draws a rounded plate in the taskbar's colours behind the text (kept across Create/Destroy).
 void SetBackground(bool on);
